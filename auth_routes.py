@@ -1,16 +1,32 @@
 from fastapi import APIRouter, Depends, HTTPException
 from models import Usuario, db
 from dependencies import pegar_sessao
-from main import bcrypt_context
+from main import bcrypt_context, ALGORITHM, SECRET_KEY, ACCESS_TOKEN_EXPIRE_MINUTES, SECRET_KEY
 from schemas import UsuarioSchema, LoginSchema
 from sqlalchemy.orm import Session
+from jose import JWTError, jwt
+from datetime import datetime, timedelta, timezone
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 
-def criar_token(id_usuario: int):
-    token = f"sdSAAKDHFEUWEYcubvdsbsudife32{id_usuario}"
-    return token
+def criar_token(id_usuario: int, duracao_token: int = ACCESS_TOKEN_EXPIRE_MINUTES):
+    data_expiracao = datetime.now(timezone.utc) + timedelta(minutes=int(duracao_token))
+    dic_info = {"sub": id_usuario, "exp": data_expiracao}
+    jwt_codificado = jwt.encode(dic_info, SECRET_KEY, ALGORITHM)
+    return jwt_codificado
 
+def verificar_token(token: str, session: Session = Depends(pegar_sessao)):
+    usuario = session.query(Usuario).filter(Usuario.id == 1).first()
+
+
+def autenticar_usuario(email, senha, session: Session):
+    usuario = session.query(Usuario).filter(Usuario.email == email).first()
+    if not usuario:
+        return False
+    elif not bcrypt_context.verify(senha, usuario.senha):
+        return False
+    return usuario
+    
 
 
 @auth_router.post("/")
@@ -37,13 +53,24 @@ async def criar_conta(usuario_schema: UsuarioSchema, session: Session = Depends(
     
 @auth_router.post("/login")
 async def login(login_schema: LoginSchema, session: Session = Depends(pegar_sessao)):
-    usuario = session.query(Usuario).filter(Usuario.email == login_schema.email).first()
+    usuario = autenticar_usuario(login_schema.email, login_schema.senha, session)
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuário não encontrado!")
     else:
-        acess_token = criar_token(usuario.id)
+        access_token = criar_token(usuario.id)
+        refresh_token = criar_token(usuario.id, duracao_token=timedelta(days=7))
         return {
-            "acess_token": acess_token,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",  
+        }
+        
+@auth_router.get("/refresh")
+async def use_refresh_token(token):
+    # verificar o token
+    usuario = verificar_token(token)
+    access_token = criar_conta(usuario.id)
+    return {
+            "acess_token": access_token,
             "token_type": "bearer",
-            
         }
